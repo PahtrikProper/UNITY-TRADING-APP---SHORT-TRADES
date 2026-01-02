@@ -1,6 +1,6 @@
 # UNITY-TRADING-APP — Short Trades (Bybit-isolated model)
 
-This repository contains a Unity-based short-only trading demonstrator that mirrors Bybit isolated-margin behavior, along with the original Python research code it was ported from. The Unity side drives backtests, parameter sweeps, and live paper trading while modeling Bybit taker fees, spread/slippage, and liquidation for ADAUSDT linear perpetuals.
+This repository contains a Unity-based short-only trading demonstrator that mirrors Bybit isolated-margin behavior. The Unity side drives backtests, parameter sweeps, and live paper trading while modeling Bybit taker fees, spread/slippage, and liquidation for ADAUSDT linear perpetuals.
 
 ## Repository layout
 
@@ -10,7 +10,6 @@ This repository contains a Unity-based short-only trading demonstrator that mirr
   - `Scripts/Engines/` — Backtest engine and optimizer (random 500-sample sweep by default). 【F:CSharpAssetsScripts/Scripts/Engines/BacktestEngine.cs†L10-L129】【F:CSharpAssetsScripts/Scripts/Engines/OptimizerEngine.cs†L12-L36】
   - `Scripts/Strategies/` — Short-only strategy (trend + centered Stoch, optional MACD/signal + momentum exit).
   - `Scripts/Bootstrap/RuntimeApp.cs` — Entry point wiring UI, data fetch, optimization, backtest, and live paper trading loops. 【F:CSharpAssetsScripts/Scripts/Bootstrap/RuntimeApp.cs†L24-L340】
-- `PythonArchive/Shortest-Peak-Reversal-5m-3x-Margin--main/` — Original Python research/backtesting code for reference.
 
 ## Key behaviors and exchange modeling
 

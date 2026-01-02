@@ -1,9 +1,12 @@
 using UnityEngine;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using ShortWaveTrader.UI;
 using ShortWaveTrader.Data;
 using ShortWaveTrader.Core;
+using ShortWaveTrader.Engines;
+using ShortWaveTrader.Strategies;
 
 namespace ShortWaveTrader
 {
@@ -20,14 +23,14 @@ namespace ShortWaveTrader
 
         IEnumerator FetchAndShow()
         {
-            ui.SetStatus("Fetching Bybit candles… ADAUSDT 3m last 24h");
+            ui.SetStatus("Fetching Bybit candles… ADAUSDT 1m latest");
             ui.SetProgress(0f);
 
             var client = new BybitKlineClient();
             List<Candle> candles = null;
             string err = null;
 
-            yield return StartCoroutine(client.FetchADAUSDT_3m_Last24h(
+            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
                 ok => candles = ok,
                 e => err = e
             ));
@@ -69,6 +72,179 @@ namespace ShortWaveTrader
                 $"LastClose={last.Close}\n" +
                 $"Δ={last.Close - first.Close:F6}"
             );
+
+            yield return StartCoroutine(RunOptimizationAndPaperTrade(candles));
+        }
+
+        private IEnumerator RunOptimizationAndPaperTrade(List<Candle> candles)
+        {
+            if (candles == null || candles.Count == 0)
+            {
+                ui.AddRow("No candles available for optimization.");
+                yield break;
+            }
+
+            ui.AddRow("----- OPTIMIZATION -----");
+            ui.SetStatus("Optimizing strategy grid…");
+
+            var baseParams = new StrategyParams();
+            var strat = new ShortOnlyTrendTPStrategy();
+            var optimizer = new OptimizerEngine();
+
+            StrategyParams bestP = null;
+            BacktestState bestR = null;
+
+            optimizer.OnIteration += (i, total, p, r) =>
+            {
+                if (i % 3 == 0)
+                    ui.SetStatus($"Optimization {i}/{total}… balance={r.Balance:F2}");
+            };
+
+            optimizer.OnBestUpdated += (p, r) =>
+            {
+                bestP = p;
+                bestR = r;
+                ui.AddRow($"Best so far: SMA={p.SmaPeriod} Stoch={p.StochPeriod} MACD={p.UseMacd} Signal={p.UseSignal} MomExit={p.UseMomentumExit} Bal={r.Balance:F2} Trades={r.Trades}");
+            };
+
+            yield return null; // allow UI to update before heavy loop
+            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 250);
+
+            if (bestP == null || bestR == null)
+            {
+                ui.AddRow("Optimization failed to produce parameters.");
+                ui.SetStatus("Optimization failed — cannot start paper trading.");
+                yield break;
+            }
+
+            ui.AddRow("----- BACKTEST (BEST) -----");
+            ui.AddRow($"Balance={bestR.Balance:F2} Trades={bestR.Trades} Wins={bestR.Wins} Losses={bestR.Losses} MaxDD={bestR.MaxDrawdown:F2}");
+            ui.SetSummary(
+                $"REAL DATA CONFIRMED\nCandles={candles.Count}\n" +
+                $"Best Params → SMA={bestP.SmaPeriod} | Stoch={bestP.StochPeriod} | MACD={bestP.UseMacd} | Signal={bestP.UseSignal} | MomentumExit={bestP.UseMomentumExit}\n" +
+                $"Backtest → Balance={bestR.Balance:F2} Trades={bestR.Trades} MaxDD={bestR.MaxDrawdown:F2}"
+            );
+
+            ui.ClearRows();
+            yield return StartCoroutine(RunLivePaperTrader(bestP, strat));
+        }
+
+        private IEnumerator RunLivePaperTrader(StrategyParams p, IStrategy strat)
+        {
+            var client = new BybitKlineClient();
+            List<Candle> liveCandles = null;
+            string err = null;
+
+            ui.SetStatus("Fetching live candles for paper trading…");
+            ui.SetProgress(0f);
+
+            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+                ok => liveCandles = ok,
+                e => err = e
+            ));
+
+            if (!string.IsNullOrEmpty(err) || liveCandles == null || liveCandles.Count == 0)
+            {
+                ui.AddRow("Unable to fetch live candles for paper trading.");
+                ui.SetStatus("Live fetch failed.");
+                if (!string.IsNullOrEmpty(err)) ui.AddRow(err);
+                yield break;
+            }
+
+            ui.SetStatus($"Paper trading on live candles ({liveCandles.Count}) with optimized params…");
+            ui.SetProgress(1f);
+            yield return StartCoroutine(RunPaperTrader(liveCandles, p, strat, "PAPER TRADING (LIVE DATA)"));
+        }
+
+        private IEnumerator RunPaperTrader(IReadOnlyList<Candle> candles, StrategyParams p, IStrategy strat, string header = "PAPER TRADING (LIVE REPLAY)")
+        {
+            ui.AddRow($"----- {header} -----");
+            ui.SetStatus("Starting paper trading replay with best params…");
+
+            var pos = new PositionState();
+            var indicators = Indicators.BuildCache(candles, p);
+            var state = new BacktestState();
+            state.Reset(p.StartingBalance);
+
+            int warmup = Mathf.Max(Mathf.Max(p.SmaPeriod, p.StochPeriod), Mathf.Max(p.MacdSlow, p.MacdSignal)) + 2;
+            int loggedTrades = 0;
+
+            for (int i = 0; i < candles.Count; i++)
+            {
+                double price = candles[i].Close;
+
+                if (!pos.IsOpen)
+                {
+                    if (i >= warmup && strat.ShouldEnterShort(candles, i, p, indicators))
+                    {
+                        double marginUsed = state.Balance * p.RiskFraction;
+                        double notional = p.MarginRate > 0 ? marginUsed / p.MarginRate : 0;
+                        double qty = price > 0 ? notional / price : 0;
+
+                        if (marginUsed > 0 && qty > 0)
+                        {
+                            state.Balance -= marginUsed;
+                            double tpPrice = price * (1 - p.TakeProfitPct);
+                            pos.OpenShort(price, i, candles[i].Time, qty, marginUsed, tpPrice);
+                            if (loggedTrades < 20)
+                            {
+                                ui.AddRow($"ENTER SHORT @{i} price={price:F4} tp={tpPrice:F4} qty={qty:F4}");
+                                loggedTrades++;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    pos.BarsHeld++;
+                    bool exit = strat.ShouldExitShort(candles, i, pos, p, indicators, out var reason);
+                    if (!exit && i == candles.Count - 1)
+                    {
+                        exit = true;
+                        reason = "FinalClose";
+                    }
+
+                    if (exit)
+                    {
+                        double exitPrice = reason == "TP" && pos.TpPrice > 0
+                            ? Math.Min(pos.TpPrice, price)
+                            : price;
+
+                        double pnl = (pos.EntryPrice - exitPrice) * pos.Qty;
+                        double after = state.Balance + pos.MarginUsed + pnl;
+
+                        state.AddTrade(new TradeRecord
+                        {
+                            EntryBar = pos.EntryIndex,
+                            ExitBar = i,
+                            EntryTime = pos.EntryTime,
+                            ExitTime = candles[i].Time,
+                            Entry = pos.EntryPrice,
+                            Exit = exitPrice,
+                            Pnl = pnl,
+                            BalanceAfter = after,
+                            Reason = reason
+                        });
+
+                        if (loggedTrades < 20)
+                        {
+                            ui.AddRow($"EXIT @{i} price={exitPrice:F4} pnl={pnl:F2} reason={reason} bal={after:F2}");
+                            loggedTrades++;
+                        }
+
+                        pos.Reset();
+                    }
+                }
+
+                if (i % 25 == 0)
+                {
+                    ui.SetStatus($"Paper trading… {i + 1}/{candles.Count} bars");
+                    yield return null;
+                }
+            }
+
+            ui.AddRow($"Paper trading complete. Trades={state.Trades} Balance={state.Balance:F2} MaxDD={state.MaxDrawdown:F2}");
+            ui.SetStatus("Paper trading finished with optimized params.");
         }
     }
 }

@@ -52,7 +52,7 @@ namespace ShortWaveTrader.Data
             yield return SendRequest(canonicalUrl, r => canonicalResp = r, err =>
             {
                 onErr?.Invoke(err);
-            }, out canonicalOk);
+            }, ok => canonicalOk = ok);
 
             if (!canonicalOk) yield break;
 
@@ -91,7 +91,7 @@ namespace ShortWaveTrader.Data
                 {
                     onErr?.Invoke(err);
                     windowOk = false;
-                }, out ok);
+                }, success => ok = success);
 
                 if (!ok || !windowOk) yield break;
 
@@ -121,9 +121,9 @@ namespace ShortWaveTrader.Data
             onOk?.Invoke(windowCandles);
         }
 
-        private IEnumerator SendRequest(string url, Action<BybitKlineResponse> onResp, Action<string> onErr, out bool ok)
+        private IEnumerator SendRequest(string url, Action<BybitKlineResponse> onResp, Action<string> onErr, Action<bool> onDone)
         {
-            ok = false;
+            bool ok = false;
             int attempt = 0;
             while (true)
             {
@@ -161,7 +161,7 @@ namespace ShortWaveTrader.Data
                     {
                         onResp?.Invoke(resp);
                         ok = true;
-                        yield break;
+                        break;
                     }
 
                     if (code == "10006" && attempt < 5)
@@ -173,9 +173,11 @@ namespace ShortWaveTrader.Data
                     }
 
                     onErr?.Invoke($"Bybit error retCode={resp.retCode} msg={resp.retMsg}\nUrl={url}");
-                    yield break;
+                    break;
                 }
             }
+
+            onDone?.Invoke(ok);
         }
 
         private static string BuildUrl(long? startMs = null, long? endMs = null, int? limit = null)

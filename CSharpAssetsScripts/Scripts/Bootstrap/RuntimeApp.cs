@@ -104,16 +104,25 @@ namespace ShortWaveTrader
             {
                 bestP = p;
                 bestR = r;
-                ui.AddRow($"New best: SMA={p.SmaPeriod} Stoch={p.StochPeriod} MACD={p.UseMacd} Signal={p.UseSignal} MomExit={p.UseMomentumExit} Balance={r.Balance:F2} Trades={r.Trades}");
+                ui.AddRow($"Best so far: SMA={p.SmaPeriod} Stoch={p.StochPeriod} MACD={p.UseMacd} Signal={p.UseSignal} MomExit={p.UseMomentumExit} Bal={r.Balance:F2} Trades={r.Trades}");
             };
 
             yield return null; // allow UI to update before heavy loop
             (bestP, bestR) = optimizer.Optimize(candles, baseParams, strat);
 
+            if (bestP == null || bestR == null)
+            {
+                ui.AddRow("Optimization failed to produce parameters.");
+                ui.SetStatus("Optimization failed — cannot start paper trading.");
+                yield break;
+            }
+
             ui.AddRow("----- BACKTEST (BEST) -----");
             ui.AddRow($"Balance={bestR.Balance:F2} Trades={bestR.Trades} Wins={bestR.Wins} Losses={bestR.Losses} MaxDD={bestR.MaxDrawdown:F2}");
             ui.SetSummary(
-                $"{ui.GetSummaryText()}\n\nBEST PARAMS\nSMA={bestP.SmaPeriod} | Stoch={bestP.StochPeriod} | MACD={bestP.UseMacd} | Signal={bestP.UseSignal} | MomentumExit={bestP.UseMomentumExit}\nBalance={bestR.Balance:F2} Trades={bestR.Trades} MaxDD={bestR.MaxDrawdown:F2}"
+                $"REAL DATA CONFIRMED\nCandles={candles.Count}\n" +
+                $"Best Params → SMA={bestP.SmaPeriod} | Stoch={bestP.StochPeriod} | MACD={bestP.UseMacd} | Signal={bestP.UseSignal} | MomentumExit={bestP.UseMomentumExit}\n" +
+                $"Backtest → Balance={bestR.Balance:F2} Trades={bestR.Trades} MaxDD={bestR.MaxDrawdown:F2}"
             );
 
             yield return StartCoroutine(RunPaperTrader(candles, bestP, strat));

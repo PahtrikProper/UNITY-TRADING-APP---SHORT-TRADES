@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using ShortWaveTrader.Core;
@@ -34,6 +35,8 @@ namespace ShortWaveTrader.Data
         private const string DefaultCategory = "linear";  // Bybit futures (Unified)
         private const int DefaultIntervalMinutes = 1;
         private const int DefaultLimit = 200;             // Canonical limit per instructions
+        private const int FallbackLimit = 1000;           // Max per Bybit paging when using start/end
+        private const int LookbackHours = 24;             // fallback window if canonical empty
 
         /// <summary>
         /// Fetch latest 1m candles for ADAUSDT (USDT Perp) from Bybit v5 (newest first -> reversed to oldest first).
@@ -41,13 +44,87 @@ namespace ShortWaveTrader.Data
         /// </summary>
         public IEnumerator FetchADAUSDT_1m_Latest(Action<List<Candle>> onOk, Action<string> onErr)
         {
-            string url =
-                $"{BaseUrl}?category={DefaultCategory}&symbol={DefaultSymbol}&interval={DefaultIntervalMinutes}&limit={DefaultLimit}";
+            var canonicalUrl = BuildUrl(limit: DefaultLimit);
+            var canonicalCandles = new List<Candle>();
 
+            var canonicalResp = new BybitKlineResponse();
+            bool canonicalOk = false;
+            yield return SendRequest(canonicalUrl, r => canonicalResp = r, err =>
+            {
+                onErr?.Invoke(err);
+            }, out canonicalOk);
+
+            if (!canonicalOk) yield break;
+
+            if (TryBuildCandles(canonicalResp, canonicalCandles, 0, canonicalUrl, out var parseErr, out var emptyList))
+            {
+                onOk?.Invoke(canonicalCandles);
+                yield break;
+            }
+
+            if (!emptyList)
+            {
+                onErr?.Invoke(parseErr);
+                yield break;
+            }
+
+            // Canonical call returned empty list; fall back to explicit 24h window paging (Python parity)
+            long endMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long startMs = endMs - (LookbackHours * 60L * 60L * 1000L);
+            if (startMs >= endMs)
+            {
+                onErr?.Invoke($"Invalid time window start>=end ({startMs}>={endMs}) while retrying Bybit fetch.");
+                yield break;
+            }
+
+            var windowCandles = new List<Candle>();
+            bool windowOk = true;
+            long cursor = startMs;
+
+            while (cursor < endMs)
+            {
+                var url = BuildUrl(cursor, endMs, FallbackLimit);
+                var windowResp = new BybitKlineResponse();
+
+                bool ok = false;
+                yield return SendRequest(url, r => windowResp = r, err =>
+                {
+                    onErr?.Invoke(err);
+                    windowOk = false;
+                }, out ok);
+
+                if (!ok || !windowOk) yield break;
+
+                if (!TryBuildCandles(windowResp, windowCandles, windowCandles.Count, url, out var winErr, out var winEmpty))
+                {
+                    onErr?.Invoke(winErr);
+                    yield break;
+                }
+
+                if (windowCandles.Count == 0 && winEmpty)
+                {
+                    onErr?.Invoke($"Bybit returned empty candles list for window (url={url})");
+                    yield break;
+                }
+
+                long lastMs = windowCandles.Count > 0 ? windowCandles[^1].TimeMs : cursor;
+                cursor = lastMs + (DefaultIntervalMinutes * 60 * 1000);
+                yield return new WaitForSeconds(0.2f);
+            }
+
+            if (windowCandles.Count == 0)
+            {
+                onErr?.Invoke("Bybit fallback window paging returned no candles.");
+                yield break;
+            }
+
+            onOk?.Invoke(windowCandles);
+        }
+
+        private IEnumerator SendRequest(string url, Action<BybitKlineResponse> onResp, Action<string> onErr, out bool ok)
+        {
+            ok = false;
             int attempt = 0;
-            BybitKlineResponse resp = null;
-
-            // retry retCode 10006 with backoff like Python client
             while (true)
             {
                 using (var req = UnityWebRequest.Get(url))
@@ -62,6 +139,7 @@ namespace ShortWaveTrader.Data
                     }
 
                     string json = req.downloadHandler.text;
+                    BybitKlineResponse resp;
                     try
                     {
                         resp = JsonUtility.FromJson<BybitKlineResponse>(json);
@@ -80,7 +158,11 @@ namespace ShortWaveTrader.Data
 
                     var code = resp.retCode.ToString();
                     if (code == "0")
-                        break;
+                    {
+                        onResp?.Invoke(resp);
+                        ok = true;
+                        yield break;
+                    }
 
                     if (code == "10006" && attempt < 5)
                     {
@@ -94,29 +176,46 @@ namespace ShortWaveTrader.Data
                     yield break;
                 }
             }
+        }
 
-            // Validate required invariants per instructions
+        private static string BuildUrl(long? startMs = null, long? endMs = null, int? limit = null)
+        {
+            var sb = new StringBuilder();
+            sb.Append(BaseUrl)
+              .Append("?category=").Append(DefaultCategory)
+              .Append("&symbol=").Append(DefaultSymbol)
+              .Append("&interval=").Append(DefaultIntervalMinutes);
+            sb.Append("&limit=").Append(limit ?? DefaultLimit);
+            if (startMs.HasValue) sb.Append("&start=").Append(startMs.Value);
+            if (endMs.HasValue) sb.Append("&end=").Append(endMs.Value);
+            return sb.ToString();
+        }
+
+        private static bool TryBuildCandles(BybitKlineResponse resp, List<Candle> output, int startIndex, string url, out string error, out bool emptyList)
+        {
+            error = null;
+            emptyList = false;
+
             if (resp.result == null)
             {
-                onErr?.Invoke($"Bybit returned no result object (url={url})");
-                yield break;
+                error = $"Bybit returned no result object (url={url})";
+                return false;
             }
 
             if (!string.Equals(resp.result.category, DefaultCategory, StringComparison.OrdinalIgnoreCase))
             {
-                onErr?.Invoke($"Unexpected category '{resp.result.category}' (url={url})");
-                yield break;
+                error = $"Unexpected category '{resp.result.category}' (url={url})";
+                return false;
             }
 
             if (resp.result.list == null || resp.result.list.Count == 0)
             {
-                onErr?.Invoke($"Bybit returned empty candles list (url={url})");
-                yield break;
+                error = $"Bybit returned empty candles list (url={url})";
+                emptyList = true;
+                return false;
             }
 
             // Bybit returns latest->oldest. Convert and reverse to oldest->newest.
-            var all = new List<Candle>(resp.result.list.Count);
-
             for (int idx = resp.result.list.Count - 1; idx >= 0; idx--)
             {
                 var row = resp.result.list[idx];
@@ -130,9 +229,9 @@ namespace ShortWaveTrader.Data
                 double v = ParseDouble(row[5]);
                 var time = DateTimeOffset.FromUnixTimeMilliseconds(tMs).UtcDateTime;
 
-                all.Add(new Candle
+                output.Add(new Candle
                 {
-                    Index = all.Count,
+                    Index = startIndex + output.Count,
                     TimeMs = tMs,
                     Time = time,
                     Open = o,
@@ -143,7 +242,7 @@ namespace ShortWaveTrader.Data
                 });
             }
 
-            onOk?.Invoke(all);
+            return true;
         }
 
         private static double ParseDouble(string s)

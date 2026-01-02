@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using ShortWaveTrader.Core;
 using ShortWaveTrader.Strategies;
 
@@ -11,8 +12,12 @@ namespace ShortWaveTrader.Engines
             var st = new BacktestState();
             st.Reset(p.StartingBalance);
 
+            if (candles == null || candles.Count == 0) return st;
+
+            var indicators = Indicators.BuildCache(candles, p);
+
             var pos = new PositionState();
-            double fixedNotional = p.StartingBalance * p.Leverage;
+            int warmup = Math.Max(Math.Max(p.SmaPeriod, p.StochPeriod), Math.Max(p.MacdSlow, p.MacdSignal)) + 2;
 
             for (int i = 0; i < candles.Count; i++)
             {
@@ -20,45 +25,56 @@ namespace ShortWaveTrader.Engines
 
                 if (!pos.IsOpen)
                 {
-                    if (strat.ShouldEnterShort(candles, i, p))
-                        pos.OpenShort(price, i);
+                    if (i < warmup)
+                    {
+                        st.MarkEquity();
+                        continue;
+                    }
+
+                    if (strat.ShouldEnterShort(candles, i, p, indicators))
+                    {
+                        double marginUsed = st.Balance * p.RiskFraction;
+                        double notional = p.MarginRate > 0 ? marginUsed / p.MarginRate : 0;
+                        double qty = price > 0 ? notional / price : 0;
+
+                        if (marginUsed > 0 && qty > 0)
+                        {
+                            st.Balance -= marginUsed;
+                            double tpPrice = price * (1 - p.TakeProfitPct);
+                            pos.OpenShort(price, i, candles[i].Time, qty, marginUsed, tpPrice);
+                            st.MarkEquity(st.Balance + marginUsed);
+                            continue;
+                        }
+                    }
                 }
                 else
                 {
                     pos.BarsHeld++;
 
-                    double adverse = (price - pos.EntryPrice) / pos.EntryPrice;
-                    if (adverse * p.Leverage >= p.MaintenanceMarginPct)
+                    bool exit = strat.ShouldExitShort(candles, i, pos, p, indicators, out var reason);
+                    if (!exit && i == candles.Count - 1)
                     {
-                        st.AddTrade(new TradeRecord
-                        {
-                            EntryBar = pos.EntryIndex,
-                            ExitBar = i,
-                            EntryTime = candles[pos.EntryIndex].Time,
-                            ExitTime = candles[i].Time,
-                            Entry = pos.EntryPrice,
-                            Exit = price,
-                            Pnl = -st.Balance,
-                            BalanceAfter = 0,
-                            Reason = "Liquidation"
-                        });
-                        break;
+                        exit = true;
+                        reason = "FinalClose";
                     }
 
-                    if (strat.ShouldExitShort(candles, i, pos, p, out var reason))
+                    if (exit)
                     {
-                        double ret = (pos.EntryPrice - price) / pos.EntryPrice;
-                        double pnl = ret * fixedNotional;
-                        double after = st.Balance + pnl;
+                        double exitPrice = reason == "TP" && pos.TpPrice > 0
+                            ? Math.Min(pos.TpPrice, price)
+                            : price;
+
+                        double pnl = (pos.EntryPrice - exitPrice) * pos.Qty;
+                        double after = st.Balance + pos.MarginUsed + pnl;
 
                         st.AddTrade(new TradeRecord
                         {
                             EntryBar = pos.EntryIndex,
                             ExitBar = i,
-                            EntryTime = candles[pos.EntryIndex].Time,
+                            EntryTime = pos.EntryTime,
                             ExitTime = candles[i].Time,
                             Entry = pos.EntryPrice,
-                            Exit = price,
+                            Exit = exitPrice,
                             Pnl = pnl,
                             BalanceAfter = after,
                             Reason = reason
@@ -68,7 +84,8 @@ namespace ShortWaveTrader.Engines
                     }
                 }
 
-                st.MarkEquity();
+                double openEquity = st.Balance + (pos.IsOpen ? pos.MarginUsed : 0);
+                st.MarkEquity(openEquity);
             }
 
             return st;

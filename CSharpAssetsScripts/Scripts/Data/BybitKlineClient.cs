@@ -18,15 +18,30 @@ namespace ShortWaveTrader.Data
 
     public sealed class BybitKlineClient
     {
-        private const string Url =
-            "https://api.bybit.com/v5/market/kline" +
-            "?category=linear&symbol=ADAUSDT&interval=1&limit=200";
+        private const string BaseUrl = "https://api.bybit.com/v5/market/kline";
+        private const string Symbol = "ADAUSDT";
+        private const int IntervalMinutes = 3;
+        private const int Limit = 1500; // 3 days of 3m bars ≈ 1440, pad a bit
 
-        public IEnumerator FetchADAUSDT_1m_Latest(
+        private static string BuildUrl()
+        {
+            long startMs = DateTimeOffset.UtcNow.AddDays(-3).ToUnixTimeMilliseconds();
+            var sb = new StringBuilder();
+            sb.Append(BaseUrl);
+            sb.Append("?category=linear");
+            sb.Append("&symbol=").Append(Symbol);
+            sb.Append("&interval=").Append(IntervalMinutes);
+            sb.Append("&limit=").Append(Limit);
+            sb.Append("&start=").Append(startMs);
+            return sb.ToString();
+        }
+
+        public IEnumerator FetchADAUSDT_3m_Last3Days(
             Action<List<Candle>> onOk,
             Action<string> onErr)
         {
-            using var req = UnityWebRequest.Get(Url);
+            string url = BuildUrl();
+            using var req = UnityWebRequest.Get(url);
             req.timeout = 20;
             yield return req.SendWebRequest();
 

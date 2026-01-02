@@ -15,7 +15,7 @@ namespace ShortWaveTrader.Core
         public double SlippageBps = 0.0;     // random slippage in basis points
         public double MaintenanceMarginRate = 0.004; // 0.4% default maintenance margin
         public int RandomSeed = 1337;
-        public double TakeProfitPct = 0.004; // 0.4% TP
+        public double TakeProfitPct = TradeMath.FixedTakeProfitPct; // hard-set TP
         public int StartYear = 2020;
         public int StartMonth = 1;
 

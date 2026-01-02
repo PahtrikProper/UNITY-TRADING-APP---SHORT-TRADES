@@ -45,7 +45,7 @@ namespace ShortWaveTrader.Engines
                         if (marginUsed > 0 && qty > 0 && st.Balance >= marginUsed + entryFee)
                         {
                             st.Balance -= marginUsed + entryFee;
-                            double tpPrice = entryPrice * (1 - p.TakeProfitPct);
+                            double tpPrice = TradeMath.TakeProfitPrice(entryPrice);
                             pos.OpenShort(entryPrice, i, candles[i].Time, qty, marginUsed, tpPrice, entryFee, notional, leverage, liqPrice);
                             st.MarkEquity(st.Balance + marginUsed);
                             continue;

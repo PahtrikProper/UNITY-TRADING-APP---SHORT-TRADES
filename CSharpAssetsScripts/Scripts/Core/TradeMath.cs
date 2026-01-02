@@ -5,6 +5,7 @@ namespace ShortWaveTrader.Core
     public static class TradeMath
     {
         private const double BpsDivisor = 10000.0;
+        public const double FixedTakeProfitPct = 0.0044; // 0.44%
 
         public static double BybitFee(double tradeValue, StrategyParams p)
         {
@@ -58,6 +59,11 @@ namespace ShortWaveTrader.Core
             }
 
             return midPrice - spread - slippageAmt;
+        }
+
+        public static double TakeProfitPrice(double entryPrice)
+        {
+            return entryPrice * (1 - FixedTakeProfitPct);
         }
     }
 }

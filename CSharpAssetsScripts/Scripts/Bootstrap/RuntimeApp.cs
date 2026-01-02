@@ -23,14 +23,14 @@ namespace ShortWaveTrader
 
         IEnumerator FetchAndShow()
         {
-            ui.SetStatus("Fetching Bybit candles… ADAUSDT 1m latest");
+            ui.SetStatus("Fetching Bybit candles… ADAUSDT 3m last 3 days");
             ui.SetProgress(0f);
 
             var client = new BybitKlineClient();
             List<Candle> candles = null;
             string err = null;
 
-            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+            yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                 ok => candles = ok,
                 e => err = e
             ));
@@ -108,7 +108,7 @@ namespace ShortWaveTrader
             };
 
             yield return null; // allow UI to update before heavy loop
-            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 250);
+            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 500);
 
             if (bestP == null || bestR == null)
             {
@@ -138,7 +138,7 @@ namespace ShortWaveTrader
             ui.SetStatus("Fetching live candles for paper trading…");
             ui.SetProgress(0f);
 
-            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+            yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                 ok => liveCandles = ok,
                 e => err = e
             ));
@@ -175,7 +175,7 @@ namespace ShortWaveTrader
                 List<Candle> candles = null;
                 string err = null;
 
-                yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+                yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                     ok => candles = ok,
                     e => err = e
                 ));
@@ -229,7 +229,7 @@ namespace ShortWaveTrader
                             if (marginUsed > 0 && qty > 0 && state.Balance >= marginUsed + entryFee)
                             {
                                 state.Balance -= marginUsed + entryFee;
-                                double tpPrice = entryPrice * (1 - p.TakeProfitPct);
+                                double tpPrice = TradeMath.TakeProfitPrice(entryPrice);
                                 pos.OpenShort(entryPrice, i, candles[i].Time, qty, marginUsed, tpPrice, entryFee, notional, leverage, liqPrice);
                                 if (loggedTrades < 20)
                                 {

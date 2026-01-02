@@ -85,19 +85,19 @@ namespace ShortWaveTrader
                 ui.AddRow("No candles available for optimization.");
                 yield break;
             }
-            int minBars = RequiredBars(baseParams) + 1;
-            if (candles.Count < minBars)
-            {
-                ui.AddRow($"Not enough history to warm indicators (need ≥{minBars} bars, got {candles.Count}).");
-                yield break;
-            }
-
             ui.AddRow("----- OPTIMIZATION -----");
             ui.SetStatus("Optimizing strategy grid…");
 
             var baseParams = new StrategyParams();
             var strat = new ShortOnlyTrendTPStrategy();
             var optimizer = new OptimizerEngine();
+
+            int minBars = RequiredBars(baseParams) + 1;
+            if (candles.Count < minBars)
+            {
+                ui.AddRow($"Not enough history to warm indicators (need ≥{minBars} bars, got {candles.Count}).");
+                yield break;
+            }
 
             StrategyParams bestP = null;
             BacktestState bestR = null;

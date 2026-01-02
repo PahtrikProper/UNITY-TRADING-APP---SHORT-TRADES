@@ -34,6 +34,7 @@ namespace ShortWaveTrader.Data
         private const string DefaultCategory = "linear";  // Bybit futures (Unified)
         private const int DefaultIntervalMinutes = 1;
         private const int DefaultLimit = 1000;            // Bybit max per page
+        private const int DefaultLookbackHours = 24;
 
         /// <summary>
         /// Fetch latest 1m candles for ADAUSDT (USDT Perp) from Bybit v5 (newest first -> reversed to oldest first).

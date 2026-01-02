@@ -28,153 +28,122 @@ namespace ShortWaveTrader.Data
     public sealed class BybitKlineClient
     {
         // Bybit v5 market kline
-        // https://api.bybit.com/v5/market/kline?category=linear&symbol=ADAUSDT&interval=3&start=...&end=...&limit=...
+        // https://api.bybit.com/v5/market/kline?category=linear&symbol=ADAUSDT&interval=1&limit=...
         private const string BaseUrl = "https://api.bybit.com/v5/market/kline";
         private const string DefaultSymbol = "ADAUSDT";   // USDT Perp
         private const string DefaultCategory = "linear";  // Bybit futures (Unified)
-        private const int DefaultIntervalMinutes = 3;
-        private const int DefaultLimit = 1000;            // Bybit max per page
+        private const int DefaultIntervalMinutes = 1;
+        private const int DefaultLimit = 200;             // Canonical limit per instructions
 
         /// <summary>
-        /// Fetch last 24 hours of 3m candles for ADAUSDT (USDT Perp) from Bybit v5, paging until no data.
-        /// Mirrors the Python data_client: retries retCode 10006 with backoff, returns oldest->newest.
+        /// Fetch latest 1m candles for ADAUSDT (USDT Perp) from Bybit v5 (newest first -> reversed to oldest first).
+        /// Mirrors the provided reference approach: single call without start/end, retry code 10006 with backoff, reverse list.
         /// </summary>
-        public IEnumerator FetchADAUSDT_3m_Last24h(Action<List<Candle>> onOk, Action<string> onErr)
+        public IEnumerator FetchADAUSDT_1m_Latest(Action<List<Candle>> onOk, Action<string> onErr)
         {
-            var nowUtc = DateTime.UtcNow;
-            var startUtc = nowUtc.AddHours(-24);
+            string url =
+                $"{BaseUrl}?category={DefaultCategory}&symbol={DefaultSymbol}&interval={DefaultIntervalMinutes}&limit={DefaultLimit}";
 
-            long endSec = ToUnixSeconds(nowUtc);
-            long startSec = ToUnixSeconds(startUtc);
-            var all = new List<Candle>();
+            int attempt = 0;
+            BybitKlineResponse resp = null;
 
-            while (startSec < endSec)
+            // retry retCode 10006 with backoff like Python client
+            while (true)
             {
-                long startMs = startSec * 1000;
-                string url =
-                    $"{BaseUrl}?category={DefaultCategory}&symbol={DefaultSymbol}&interval={DefaultIntervalMinutes}&start={startMs}&limit={DefaultLimit}";
-
-                int attempt = 0;
-                BybitKlineResponse resp = null;
-
-                // retry retCode 10006 with backoff like Python client
-                while (true)
+                using (var req = UnityWebRequest.Get(url))
                 {
-                    using (var req = UnityWebRequest.Get(url))
+                    req.timeout = 20;
+                    yield return req.SendWebRequest();
+
+                    if (req.result != UnityWebRequest.Result.Success)
                     {
-                        req.timeout = 20;
-                        yield return req.SendWebRequest();
-
-                        if (req.result != UnityWebRequest.Result.Success)
-                        {
-                            onErr?.Invoke($"HTTP error: {req.error} (url={url})");
-                            yield break;
-                        }
-
-                        string json = req.downloadHandler.text;
-                        try
-                        {
-                            resp = JsonUtility.FromJson<BybitKlineResponse>(json);
-                        }
-                        catch (Exception e)
-                        {
-                            onErr?.Invoke($"JSON parse error: {e.Message}\nRaw: {json}\nUrl={url}");
-                            yield break;
-                        }
-
-                        if (resp == null)
-                        {
-                            onErr?.Invoke($"Null response parse.\nRaw: {json}\nUrl={url}");
-                            yield break;
-                        }
-
-                        var code = resp.retCode.ToString();
-                        if (code == "0")
-                            break;
-
-                        if (code == "10006" && attempt < 5)
-                        {
-                            attempt++;
-                            float backoffSeconds = 1.5f * attempt;
-                            yield return new WaitForSeconds(backoffSeconds);
-                            continue;
-                        }
-
-                        onErr?.Invoke($"Bybit error retCode={resp.retCode} msg={resp.retMsg}\nUrl={url}");
+                        onErr?.Invoke($"HTTP error: {req.error} (url={url})");
                         yield break;
                     }
-                }
 
-                if (resp.result == null || resp.result.list == null || resp.result.list.Count == 0)
-                    break;
-
-                // Bybit returns latest->oldest. Convert and reverse to oldest->newest.
-                var page = new List<Candle>(resp.result.list.Count);
-
-                // Each item: [startTime, open, high, low, close, volume, turnover]
-                foreach (var row in resp.result.list)
-                {
-                    if (row == null || row.Count < 6) continue;
-
-                    long tMs = ParseLong(row[0]);
-                    double o = ParseDouble(row[1]);
-                    double h = ParseDouble(row[2]);
-                    double l = ParseDouble(row[3]);
-                    double c = ParseDouble(row[4]);
-                    double v = ParseDouble(row[5]);
-                    var time = DateTimeOffset.FromUnixTimeMilliseconds(tMs).UtcDateTime;
-
-                    page.Add(new Candle
+                    string json = req.downloadHandler.text;
+                    try
                     {
-                        Index = all.Count + page.Count,
-                        TimeMs = tMs,
-                        Time = time,
-                        Open = o,
-                        High = h,
-                        Low = l,
-                        Close = c,
-                        Volume = v
-                    });
+                        resp = JsonUtility.FromJson<BybitKlineResponse>(json);
+                    }
+                    catch (Exception e)
+                    {
+                        onErr?.Invoke($"JSON parse error: {e.Message}\nRaw: {json}\nUrl={url}");
+                        yield break;
+                    }
+
+                    if (resp == null)
+                    {
+                        onErr?.Invoke($"Null response parse.\nRaw: {json}\nUrl={url}");
+                        yield break;
+                    }
+
+                    var code = resp.retCode.ToString();
+                    if (code == "0")
+                        break;
+
+                    if (code == "10006" && attempt < 5)
+                    {
+                        attempt++;
+                        float backoffSeconds = 1.5f * attempt;
+                        yield return new WaitForSeconds(backoffSeconds);
+                        continue;
+                    }
+
+                    onErr?.Invoke($"Bybit error retCode={resp.retCode} msg={resp.retMsg}\nUrl={url}");
+                    yield break;
                 }
-
-                page.Reverse(); // oldest->newest
-                all.AddRange(page);
-
-                // advance start to next bar to avoid duplicates
-                long lastMs = page.Count > 0 ? page[^1].TimeMs : startSec * 1000;
-                startSec = (lastMs / 1000) + (DefaultIntervalMinutes * 60);
-
-                // small pause to avoid hammering
-                yield return new WaitForSeconds(0.2f);
             }
 
-            if (all.Count == 0)
+            // Validate required invariants per instructions
+            if (resp.result == null)
             {
-                onErr?.Invoke("Bybit returned no candles for ADAUSDT 3m futures.");
+                onErr?.Invoke($"Bybit returned no result object (url={url})");
                 yield break;
             }
 
-            all.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
-            for (int i = 0; i < all.Count; i++)
+            if (!string.Equals(resp.result.category, DefaultCategory, StringComparison.OrdinalIgnoreCase))
             {
-                var c = all[i];
-                c.Index = i;
-                all[i] = c;
+                onErr?.Invoke($"Unexpected category '{resp.result.category}' (url={url})");
+                yield break;
+            }
+
+            if (resp.result.list == null || resp.result.list.Count == 0)
+            {
+                onErr?.Invoke($"Bybit returned empty candles list (url={url})");
+                yield break;
+            }
+
+            // Bybit returns latest->oldest. Convert and reverse to oldest->newest.
+            var all = new List<Candle>(resp.result.list.Count);
+
+            for (int idx = resp.result.list.Count - 1; idx >= 0; idx--)
+            {
+                var row = resp.result.list[idx];
+                if (row == null || row.Count < 6) continue;
+
+                long tMs = ParseLong(row[0]);
+                double o = ParseDouble(row[1]);
+                double h = ParseDouble(row[2]);
+                double l = ParseDouble(row[3]);
+                double c = ParseDouble(row[4]);
+                double v = ParseDouble(row[5]);
+                var time = DateTimeOffset.FromUnixTimeMilliseconds(tMs).UtcDateTime;
+
+                all.Add(new Candle
+                {
+                    Index = all.Count,
+                    TimeMs = tMs,
+                    Time = time,
+                    Open = o,
+                    High = h,
+                    Low = l,
+                    Close = c,
+                    Volume = v
+                });
             }
 
             onOk?.Invoke(all);
-        }
-
-        private static long ToUnixMs(DateTime utc)
-        {
-            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            return (long)(utc - epoch).TotalMilliseconds;
-        }
-
-        private static long ToUnixSeconds(DateTime utc)
-        {
-            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            return (long)(utc - epoch).TotalSeconds;
         }
 
         private static double ParseDouble(string s)

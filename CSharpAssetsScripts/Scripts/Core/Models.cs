@@ -8,6 +8,13 @@ namespace ShortWaveTrader.Core
         public double StartingBalance = 1000.0;
         public double RiskFraction = 0.95;   // percent of equity to deploy per trade
         public double MarginRate = 0.10;     // 10x notional when risking 100%
+        public double DesiredLeverage = 3.0; // target leverage, clamped by MarginRate/MaxLeverage
+        public double MaxLeverage = 50.0;    // safety cap to mirror exchange tier rules
+        public double BybitFeeRate = 0.0006; // taker fee % (6 bps default)
+        public double SpreadBps = 0.0;       // bid/ask spread in basis points
+        public double SlippageBps = 0.0;     // random slippage in basis points
+        public double MaintenanceMarginRate = 0.004; // 0.4% default maintenance margin
+        public int RandomSeed = 1337;
         public double TakeProfitPct = 0.004; // 0.4% TP
         public int StartYear = 2020;
         public int StartMonth = 1;
@@ -39,8 +46,13 @@ namespace ShortWaveTrader.Core
         public double Qty;
         public double MarginUsed;
         public double TpPrice;
+        public double EntryFee;
+        public double ExitFee;
+        public double TradeValue;
+        public double Leverage;
+        public double LiqPrice;
 
-        public void OpenShort(double price, int index, DateTime time, double qty, double marginUsed, double tpPrice)
+        public void OpenShort(double price, int index, DateTime time, double qty, double marginUsed, double tpPrice, double entryFee, double tradeValue, double leverage, double liqPrice)
         {
             IsOpen = true;
             EntryPrice = price;
@@ -50,6 +62,10 @@ namespace ShortWaveTrader.Core
             Qty = qty;
             MarginUsed = marginUsed;
             TpPrice = tpPrice;
+            EntryFee = entryFee;
+            TradeValue = tradeValue;
+            Leverage = leverage;
+            LiqPrice = liqPrice;
         }
 
         public void Reset()
@@ -62,6 +78,17 @@ namespace ShortWaveTrader.Core
             Qty = 0;
             MarginUsed = 0;
             TpPrice = 0;
+            EntryFee = 0;
+            ExitFee = 0;
+            TradeValue = 0;
+            Leverage = 0;
+            LiqPrice = 0;
+        }
+
+        public double UnrealizedPnl(double markPrice)
+        {
+            if (!IsOpen || Qty <= 0) return 0;
+            return (EntryPrice - markPrice) * Qty;
         }
     }
 
@@ -74,7 +101,11 @@ namespace ShortWaveTrader.Core
         public double Entry;
         public double Exit;
         public double Pnl;
+        public double EntryFee;
+        public double ExitFee;
         public double BalanceAfter;
+        public double Leverage;
+        public double LiqPrice;
         public string Reason;
     }
 

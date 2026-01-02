@@ -96,8 +96,8 @@ namespace ShortWaveTrader
 
             optimizer.OnIteration += (i, total, p, r) =>
             {
-                if (i % 3 == 0)
-                    ui.SetStatus($"Optimization {i}/{total}… balance={r.Balance:F2}");
+                float pct = (float)i / total;
+                ui.SetStatus($"Optimization {i}/{total} ({pct:P0})… bal={r.Balance:F2}");
             };
 
             optimizer.OnBestUpdated += (p, r) =>
@@ -153,98 +153,134 @@ namespace ShortWaveTrader
 
             ui.SetStatus($"Paper trading on live candles ({liveCandles.Count}) with optimized params…");
             ui.SetProgress(1f);
-            yield return StartCoroutine(RunPaperTrader(liveCandles, p, strat, "PAPER TRADING (LIVE DATA)"));
+            yield return StartCoroutine(RunPaperTraderLiveLoop(liveCandles[^1].TimeMs, p, strat, state: null, pos: null));
         }
 
-        private IEnumerator RunPaperTrader(IReadOnlyList<Candle> candles, StrategyParams p, IStrategy strat, string header = "PAPER TRADING (LIVE REPLAY)")
+        private IEnumerator RunPaperTraderLiveLoop(long lastProcessedMs, StrategyParams p, IStrategy strat, BacktestState state, PositionState pos)
         {
-            ui.AddRow($"----- {header} -----");
-            ui.SetStatus("Starting paper trading replay with best params…");
+            ui.AddRow("----- PAPER TRADING (LIVE DATA STREAM) -----");
+            ui.SetStatus("Starting live paper trading with optimized params…");
 
-            var pos = new PositionState();
-            var indicators = Indicators.BuildCache(candles, p);
-            var state = new BacktestState();
+            pos ??= new PositionState();
+            state ??= new BacktestState();
             state.Reset(p.StartingBalance);
 
             int warmup = Mathf.Max(Mathf.Max(p.SmaPeriod, p.StochPeriod), Mathf.Max(p.MacdSlow, p.MacdSignal)) + 2;
             int loggedTrades = 0;
 
-            for (int i = 0; i < candles.Count; i++)
+            while (true)
             {
-                double price = candles[i].Close;
+                var client = new BybitKlineClient();
+                List<Candle> candles = null;
+                string err = null;
 
-                if (!pos.IsOpen)
+                yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+                    ok => candles = ok,
+                    e => err = e
+                ));
+
+                if (!string.IsNullOrEmpty(err) || candles == null || candles.Count == 0)
                 {
-                    if (i >= warmup && strat.ShouldEnterShort(candles, i, p, indicators))
-                    {
-                        double marginUsed = state.Balance * p.RiskFraction;
-                        double notional = p.MarginRate > 0 ? marginUsed / p.MarginRate : 0;
-                        double qty = price > 0 ? notional / price : 0;
+                    ui.SetStatus("Live fetch failed, retrying shortly…");
+                    if (!string.IsNullOrEmpty(err)) ui.AddRow($"LIVE ERR: {err}");
+                    yield return new WaitForSeconds(10f);
+                    continue;
+                }
 
-                        if (marginUsed > 0 && qty > 0)
+                var indicators = Indicators.BuildCache(candles, p);
+                int startIdx = 0;
+                if (lastProcessedMs > 0)
+                {
+                    startIdx = candles.Count;
+                    for (int i = 0; i < candles.Count; i++)
+                    {
+                        if (candles[i].TimeMs > lastProcessedMs)
                         {
-                            state.Balance -= marginUsed;
-                            double tpPrice = price * (1 - p.TakeProfitPct);
-                            pos.OpenShort(price, i, candles[i].Time, qty, marginUsed, tpPrice);
-                            if (loggedTrades < 20)
+                            startIdx = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (startIdx >= candles.Count)
+                {
+                    ui.SetStatus("No new bars yet… waiting.");
+                    yield return new WaitForSeconds(10f);
+                    continue;
+                }
+
+                for (int i = startIdx; i < candles.Count; i++)
+                {
+                    double price = candles[i].Close;
+
+                    if (!pos.IsOpen)
+                    {
+                        if (i >= warmup && strat.ShouldEnterShort(candles, i, p, indicators))
+                        {
+                            double marginUsed = state.Balance * p.RiskFraction;
+                            double notional = p.MarginRate > 0 ? marginUsed / p.MarginRate : 0;
+                            double qty = price > 0 ? notional / price : 0;
+
+                            if (marginUsed > 0 && qty > 0)
                             {
-                                ui.AddRow($"ENTER SHORT @{i} price={price:F4} tp={tpPrice:F4} qty={qty:F4}");
-                                loggedTrades++;
+                                state.Balance -= marginUsed;
+                                double tpPrice = price * (1 - p.TakeProfitPct);
+                                pos.OpenShort(price, i, candles[i].Time, qty, marginUsed, tpPrice);
+                                if (loggedTrades < 20)
+                                {
+                                    ui.AddRow($"ENTER SHORT @{i} price={price:F4} tp={tpPrice:F4} qty={qty:F4}");
+                                    loggedTrades++;
+                                }
                             }
                         }
                     }
-                }
-                else
-                {
-                    pos.BarsHeld++;
-                    bool exit = strat.ShouldExitShort(candles, i, pos, p, indicators, out var reason);
-                    if (!exit && i == candles.Count - 1)
+                    else
                     {
-                        exit = true;
-                        reason = "FinalClose";
-                    }
-
-                    if (exit)
-                    {
-                        double exitPrice = reason == "TP" && pos.TpPrice > 0
-                            ? Math.Min(pos.TpPrice, price)
-                            : price;
-
-                        double pnl = (pos.EntryPrice - exitPrice) * pos.Qty;
-                        double after = state.Balance + pos.MarginUsed + pnl;
-
-                        state.AddTrade(new TradeRecord
+                        pos.BarsHeld++;
+                        bool exit = strat.ShouldExitShort(candles, i, pos, p, indicators, out var reason);
+                        if (!exit && i == candles.Count - 1)
                         {
-                            EntryBar = pos.EntryIndex,
-                            ExitBar = i,
-                            EntryTime = pos.EntryTime,
-                            ExitTime = candles[i].Time,
-                            Entry = pos.EntryPrice,
-                            Exit = exitPrice,
-                            Pnl = pnl,
-                            BalanceAfter = after,
-                            Reason = reason
-                        });
-
-                        if (loggedTrades < 20)
-                        {
-                            ui.AddRow($"EXIT @{i} price={exitPrice:F4} pnl={pnl:F2} reason={reason} bal={after:F2}");
-                            loggedTrades++;
+                            exit = true;
+                            reason = "FinalClose";
                         }
 
-                        pos.Reset();
+                        if (exit)
+                        {
+                            double exitPrice = reason == "TP" && pos.TpPrice > 0
+                                ? Math.Min(pos.TpPrice, price)
+                                : price;
+
+                            double pnl = (pos.EntryPrice - exitPrice) * pos.Qty;
+                            double after = state.Balance + pos.MarginUsed + pnl;
+
+                            state.AddTrade(new TradeRecord
+                            {
+                                EntryBar = pos.EntryIndex,
+                                ExitBar = i,
+                                EntryTime = pos.EntryTime,
+                                ExitTime = candles[i].Time,
+                                Entry = pos.EntryPrice,
+                                Exit = exitPrice,
+                                Pnl = pnl,
+                                BalanceAfter = after,
+                                Reason = reason
+                            });
+
+                            if (loggedTrades < 20)
+                            {
+                                ui.AddRow($"EXIT @{i} price={exitPrice:F4} pnl={pnl:F2} reason={reason} bal={after:F2}");
+                                loggedTrades++;
+                            }
+
+                            pos.Reset();
+                        }
                     }
                 }
 
-                if (i % 25 == 0)
-                {
-                    ui.SetStatus($"Paper trading… {i + 1}/{candles.Count} bars");
-                    yield return null;
-                }
+                lastProcessedMs = candles[^1].TimeMs;
+                ui.SetStatus($"Paper trading live… last={DateTimeOffset.FromUnixTimeMilliseconds(lastProcessedMs):HH:mm:ss} bal={state.Balance:F2}");
+                yield return new WaitForSeconds(15f);
             }
-
-            ui.AddRow($"Paper trading complete. Trades={state.Trades} Balance={state.Balance:F2} MaxDD={state.MaxDrawdown:F2}");
-            ui.SetStatus("Paper trading finished with optimized params.");
         }
     }
 }

@@ -9,8 +9,9 @@ namespace ShortWaveTrader.UI
         private TMP_Text titleText;
         private TMP_Text statusText;
         private Image progressFill;
-        private RectTransform tableRoot;
+        private RectTransform tableContent;
         private TMP_Text summaryText;
+        private ScrollRect scrollRect;
 
         // =========================
         // BUILD
@@ -21,8 +22,11 @@ namespace ShortWaveTrader.UI
             var canvas = canvasGO.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
 
-            canvasGO.AddComponent<CanvasScaler>().uiScaleMode =
-                CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            var scaler = canvasGO.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1280, 720);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
             canvasGO.AddComponent<GraphicRaycaster>();
 
             var root = canvasGO.transform;
@@ -30,14 +34,14 @@ namespace ShortWaveTrader.UI
             var bg = NewPanel(root, new Color(0.15f, 0.2f, 0.3f, 1f));
             Stretch(bg);
 
-            titleText = NewText(bg.transform, "ShortWaveTrader — Python Parity", 28);
-            Anchor(titleText.rectTransform, 10, -10, -10, -50);
+            titleText = NewText(bg.transform, "ShortWaveTrader — Python Parity", 24, TextAlignmentOptions.Left);
+            Anchor(titleText.rectTransform, 16, -12, -16, -52);
 
-            statusText = NewText(bg.transform, "Initializing…", 18);
-            Anchor(statusText.rectTransform, 10, -50, -10, -80);
+            statusText = NewText(bg.transform, "Initializing…", 16, TextAlignmentOptions.Left);
+            Anchor(statusText.rectTransform, 16, -48, -16, -88);
 
-            var barBG = NewImage(bg.transform, new Color(0.25f, 0.25f, 0.25f, 1f), 22);
-            Anchor(barBG.rectTransform, 10, -90, -10, -115);
+            var barBG = NewImage(bg.transform, new Color(0.25f, 0.25f, 0.25f, 1f), 18);
+            Anchor(barBG.rectTransform, 16, -84, -16, -112);
 
             progressFill = NewImage(barBG.transform, Color.white, 22);
             progressFill.rectTransform.anchorMin = new Vector2(0, 0);
@@ -45,13 +49,13 @@ namespace ShortWaveTrader.UI
             progressFill.rectTransform.offsetMin = Vector2.zero;
             progressFill.rectTransform.offsetMax = Vector2.zero;
 
-            var tableGO = new GameObject("Table");
-            tableRoot = tableGO.AddComponent<RectTransform>();
-            tableRoot.SetParent(bg.transform, false);
-            Anchor(tableRoot, 10, -130, -10, -420);
+            BuildTable(bg.transform);
 
-            summaryText = NewText(bg.transform, "", 16);
-            Anchor(summaryText.rectTransform, 10, -430, -10, -600);
+            var summaryPanel = NewPanel(bg.transform, new Color(0.12f, 0.14f, 0.18f, 1f));
+            Anchor(summaryPanel.GetComponent<RectTransform>(), 16, -430, -16, -16);
+            summaryText = NewText(summaryPanel.transform, "", 16, TextAlignmentOptions.Left);
+            Stretch(summaryText.gameObject);
+            summaryText.textWrappingMode = TextWrappingModes.Normal;
         }
 
         // =========================
@@ -67,18 +71,18 @@ namespace ShortWaveTrader.UI
 
         public void AddRow(string text)
         {
-            var row = NewText(tableRoot, text, 14);
-            row.textWrappingMode = TextWrappingModes.NoWrap;
-
-            var rt = row.rectTransform;
-            rt.anchorMin = new Vector2(0, 1);
-            rt.anchorMax = new Vector2(1, 1);
-            rt.pivot = new Vector2(0, 1);
-            rt.sizeDelta = new Vector2(0, 20);
-            rt.anchoredPosition = new Vector2(0, -tableRoot.childCount * 20);
+            var row = NewText(tableContent, text, 14, TextAlignmentOptions.Left);
+            row.enableWordWrapping = true;
+            row.textWrappingMode = TextWrappingModes.Normal;
+            var layout = row.gameObject.AddComponent<LayoutElement>();
+            layout.preferredHeight = 24;
+            layout.minHeight = 20;
+            Canvas.ForceUpdateCanvases();
+            scrollRect.verticalNormalizedPosition = 0;
         }
 
         public void SetSummary(string text) => summaryText.text = text;
+        public string GetSummaryText() => summaryText != null ? summaryText.text : string.Empty;
 
         // =========================
         // HELPERS
@@ -101,7 +105,7 @@ namespace ShortWaveTrader.UI
             return img;
         }
 
-        private TMP_Text NewText(Transform parent, string text, int size)
+        private TMP_Text NewText(Transform parent, string text, int size, TextAlignmentOptions align = TextAlignmentOptions.Left)
         {
             var go = new GameObject("TMP_Text");
             go.transform.SetParent(parent, false);
@@ -109,7 +113,7 @@ namespace ShortWaveTrader.UI
             t.text = text;
             t.fontSize = size;
             t.color = Color.white;
-            t.alignment = TextAlignmentOptions.Left;
+            t.alignment = align;
             return t;
         }
 
@@ -128,6 +132,42 @@ namespace ShortWaveTrader.UI
             rt.anchorMax = new Vector2(1, 1);
             rt.offsetMin = new Vector2(l, b);
             rt.offsetMax = new Vector2(-r, t);
+        }
+
+        private void BuildTable(Transform parent)
+        {
+            var scrollGO = new GameObject("TableScroll");
+            scrollGO.transform.SetParent(parent, false);
+            scrollRect = scrollGO.AddComponent<ScrollRect>();
+            var scrollRT = scrollGO.GetComponent<RectTransform>();
+            Anchor(scrollRT, 16, -120, -16, -440);
+
+            var scrollBg = scrollGO.AddComponent<Image>();
+            scrollBg.color = new Color(0.1f, 0.12f, 0.16f, 1f);
+            scrollGO.AddComponent<RectMask2D>();
+
+            var contentGO = new GameObject("Content");
+            tableContent = contentGO.AddComponent<RectTransform>();
+            tableContent.SetParent(scrollGO.transform, false);
+            tableContent.anchorMin = new Vector2(0, 1);
+            tableContent.anchorMax = new Vector2(1, 1);
+            tableContent.pivot = new Vector2(0, 1);
+            tableContent.offsetMin = new Vector2(0, 0);
+            tableContent.offsetMax = new Vector2(0, 0);
+
+            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
+            layout.childForceExpandHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 4;
+            layout.childAlignment = TextAnchor.UpperLeft;
+
+            var fitter = contentGO.AddComponent<ContentSizeFitter>();
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            scrollRect.content = tableContent;
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.viewport = scrollRT;
         }
     }
 }

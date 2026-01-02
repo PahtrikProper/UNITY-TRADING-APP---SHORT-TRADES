@@ -27,10 +27,12 @@ namespace ShortWaveTrader
             ui.SetProgress(0f);
 
             var client = new BybitKlineClient();
+            int minBars = RequiredBars(new StrategyParams()) + 10;
             List<Candle> candles = null;
             string err = null;
 
             yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
+                minBars,
                 ok => candles = ok,
                 e => err = e
             ));
@@ -83,6 +85,12 @@ namespace ShortWaveTrader
                 ui.AddRow("No candles available for optimization.");
                 yield break;
             }
+            int minBars = RequiredBars(baseParams) + 1;
+            if (candles.Count < minBars)
+            {
+                ui.AddRow($"Not enough history to warm indicators (need ≥{minBars} bars, got {candles.Count}).");
+                yield break;
+            }
 
             ui.AddRow("----- OPTIMIZATION -----");
             ui.SetStatus("Optimizing strategy grid…");
@@ -132,6 +140,7 @@ namespace ShortWaveTrader
         private IEnumerator RunLivePaperTrader(StrategyParams p, IStrategy strat)
         {
             var client = new BybitKlineClient();
+            int minBars = RequiredBars(p) + 10;
             List<Candle> liveCandles = null;
             string err = null;
 
@@ -139,6 +148,7 @@ namespace ShortWaveTrader
             ui.SetProgress(0f);
 
             yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
+                minBars,
                 ok => liveCandles = ok,
                 e => err = e
             ));
@@ -166,16 +176,18 @@ namespace ShortWaveTrader
             state.Reset(p.StartingBalance);
             var rng = new System.Random(p.RandomSeed);
 
-            int warmup = Mathf.Max(Mathf.Max(p.SmaPeriod, p.StochPeriod), Mathf.Max(p.MacdSlow, p.MacdSignal)) + 2;
+            int warmup = RequiredBars(p);
             int loggedTrades = 0;
 
             while (true)
             {
                 var client = new BybitKlineClient();
+                int minBars = warmup + 10;
                 List<Candle> candles = null;
                 string err = null;
 
                 yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
+                    minBars,
                     ok => candles = ok,
                     e => err = e
                 ));
@@ -184,6 +196,12 @@ namespace ShortWaveTrader
                 {
                     ui.SetStatus("Live fetch failed, retrying shortly…");
                     if (!string.IsNullOrEmpty(err)) ui.AddRow($"LIVE ERR: {err}");
+                    yield return new WaitForSeconds(10f);
+                    continue;
+                }
+                if (candles.Count < warmup + 1)
+                {
+                    ui.AddRow($"Not enough candles for indicators (have {candles.Count}, need {warmup + 1}). Refetching soon…");
                     yield return new WaitForSeconds(10f);
                     continue;
                 }
@@ -344,6 +362,11 @@ namespace ShortWaveTrader
                 ui.SetStatus($"Paper trading live… last={DateTimeOffset.FromUnixTimeMilliseconds(lastProcessedMs):HH:mm:ss} bal={state.Balance:F2}");
                 yield return new WaitForSeconds(15f);
             }
+        }
+
+        private static int RequiredBars(StrategyParams p)
+        {
+            return Mathf.Max(Mathf.Max(p.SmaPeriod, p.StochPeriod), Mathf.Max(p.MacdSlow, p.MacdSignal)) + 2;
         }
     }
 }

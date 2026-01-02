@@ -12,6 +12,7 @@ namespace ShortWaveTrader.UI
         private RectTransform tableContent;
         private TMP_Text summaryText;
         private ScrollRect scrollRect;
+        private VerticalLayoutGroup logLayout;
 
         // =========================
         // BUILD
@@ -34,28 +35,28 @@ namespace ShortWaveTrader.UI
             var bg = NewPanel(root, new Color(0.15f, 0.2f, 0.3f, 1f));
             Stretch(bg);
 
-            titleText = NewText(bg.transform, "ShortWaveTrader — Python Parity", 24, TextAlignmentOptions.Left);
-            Anchor(titleText.rectTransform, 16, -12, -16, -52);
+            var stack = new GameObject("Stack");
+            var stackRT = stack.AddComponent<RectTransform>();
+            stack.transform.SetParent(bg.transform, false);
+            Stretch(stack);
+            var vLayout = stack.AddComponent<VerticalLayoutGroup>();
+            vLayout.padding = new RectOffset(16, 16, 16, 16);
+            vLayout.spacing = 12;
+            vLayout.childAlignment = TextAnchor.UpperLeft;
+            vLayout.childForceExpandHeight = false;
+            vLayout.childForceExpandWidth = true;
 
-            statusText = NewText(bg.transform, "Initializing…", 16, TextAlignmentOptions.Left);
-            Anchor(statusText.rectTransform, 16, -48, -16, -88);
+            titleText = NewText(stack.transform, "ShortWaveTrader — Python Parity", 24, TextAlignmentOptions.Left);
+            var titleLE = titleText.gameObject.AddComponent<LayoutElement>();
+            titleLE.preferredHeight = 34;
 
-            var barBG = NewImage(bg.transform, new Color(0.25f, 0.25f, 0.25f, 1f), 18);
-            Anchor(barBG.rectTransform, 16, -84, -16, -112);
+            statusText = NewText(stack.transform, "Initializing…", 16, TextAlignmentOptions.Left);
+            var statusLE = statusText.gameObject.AddComponent<LayoutElement>();
+            statusLE.preferredHeight = 28;
 
-            progressFill = NewImage(barBG.transform, Color.white, 22);
-            progressFill.rectTransform.anchorMin = new Vector2(0, 0);
-            progressFill.rectTransform.anchorMax = new Vector2(0, 1);
-            progressFill.rectTransform.offsetMin = Vector2.zero;
-            progressFill.rectTransform.offsetMax = Vector2.zero;
-
-            BuildTable(bg.transform);
-
-            var summaryPanel = NewPanel(bg.transform, new Color(0.12f, 0.14f, 0.18f, 1f));
-            Anchor(summaryPanel.GetComponent<RectTransform>(), 16, -430, -16, -16);
-            summaryText = NewText(summaryPanel.transform, "", 16, TextAlignmentOptions.Left);
-            Stretch(summaryText.gameObject);
-            summaryText.textWrappingMode = TextWrappingModes.Normal;
+            BuildProgressBar(stack.transform);
+            BuildSummary(stack.transform);
+            BuildTable(stack.transform);
         }
 
         // =========================
@@ -75,8 +76,8 @@ namespace ShortWaveTrader.UI
             row.enableWordWrapping = true;
             row.textWrappingMode = TextWrappingModes.Normal;
             var layout = row.gameObject.AddComponent<LayoutElement>();
-            layout.preferredHeight = 24;
-            layout.minHeight = 20;
+            layout.preferredHeight = 20;
+            layout.minHeight = 18;
             Canvas.ForceUpdateCanvases();
             scrollRect.verticalNormalizedPosition = 0;
         }
@@ -138,28 +139,40 @@ namespace ShortWaveTrader.UI
         {
             var scrollGO = new GameObject("TableScroll");
             scrollGO.transform.SetParent(parent, false);
+            var le = scrollGO.AddComponent<LayoutElement>();
+            le.preferredHeight = 320;
+            le.flexibleHeight = 1;
+
             scrollRect = scrollGO.AddComponent<ScrollRect>();
             var scrollRT = scrollGO.GetComponent<RectTransform>();
-            Anchor(scrollRT, 16, -120, -16, -440);
+            Stretch(scrollGO);
 
             var scrollBg = scrollGO.AddComponent<Image>();
             scrollBg.color = new Color(0.1f, 0.12f, 0.16f, 1f);
             scrollGO.AddComponent<RectMask2D>();
 
+            var viewport = new GameObject("Viewport");
+            var viewportRT = viewport.AddComponent<RectTransform>();
+            viewport.transform.SetParent(scrollGO.transform, false);
+            Stretch(viewport);
+            viewport.AddComponent<RectMask2D>();
+            var vpImg = viewport.AddComponent<Image>();
+            vpImg.color = new Color(0, 0, 0, 0); // transparent holder
+
             var contentGO = new GameObject("Content");
             tableContent = contentGO.AddComponent<RectTransform>();
-            tableContent.SetParent(scrollGO.transform, false);
+            tableContent.SetParent(viewport.transform, false);
             tableContent.anchorMin = new Vector2(0, 1);
             tableContent.anchorMax = new Vector2(1, 1);
             tableContent.pivot = new Vector2(0, 1);
-            tableContent.offsetMin = new Vector2(0, 0);
-            tableContent.offsetMax = new Vector2(0, 0);
+            tableContent.offsetMin = Vector2.zero;
+            tableContent.offsetMax = Vector2.zero;
 
-            var layout = contentGO.AddComponent<VerticalLayoutGroup>();
-            layout.childForceExpandHeight = false;
-            layout.childForceExpandWidth = true;
-            layout.spacing = 4;
-            layout.childAlignment = TextAnchor.UpperLeft;
+            logLayout = contentGO.AddComponent<VerticalLayoutGroup>();
+            logLayout.childForceExpandHeight = false;
+            logLayout.childForceExpandWidth = true;
+            logLayout.spacing = 4;
+            logLayout.childAlignment = TextAnchor.UpperLeft;
 
             var fitter = contentGO.AddComponent<ContentSizeFitter>();
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
@@ -167,7 +180,33 @@ namespace ShortWaveTrader.UI
             scrollRect.content = tableContent;
             scrollRect.horizontal = false;
             scrollRect.vertical = true;
-            scrollRect.viewport = scrollRT;
+            scrollRect.viewport = viewportRT;
+        }
+
+        private void BuildSummary(Transform parent)
+        {
+            var summaryPanel = NewPanel(parent, new Color(0.12f, 0.14f, 0.18f, 1f));
+            var le = summaryPanel.AddComponent<LayoutElement>();
+            le.preferredHeight = 120;
+            le.flexibleHeight = 0;
+
+            summaryText = NewText(summaryPanel.transform, "", 16, TextAlignmentOptions.Left);
+            Stretch(summaryText.gameObject);
+            summaryText.textWrappingMode = TextWrappingModes.Normal;
+            summaryText.margin = new Vector4(8, 8, 8, 8);
+        }
+
+        private void BuildProgressBar(Transform parent)
+        {
+            var barBG = NewImage(parent, new Color(0.25f, 0.25f, 0.25f, 1f), 18);
+            var le = barBG.gameObject.AddComponent<LayoutElement>();
+            le.preferredHeight = 18;
+
+            progressFill = NewImage(barBG.transform, Color.white, 18);
+            progressFill.rectTransform.anchorMin = new Vector2(0, 0);
+            progressFill.rectTransform.anchorMax = new Vector2(0, 1);
+            progressFill.rectTransform.offsetMin = Vector2.zero;
+            progressFill.rectTransform.offsetMax = Vector2.zero;
         }
     }
 }

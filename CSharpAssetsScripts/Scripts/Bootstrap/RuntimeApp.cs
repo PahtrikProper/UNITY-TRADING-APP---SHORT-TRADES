@@ -23,14 +23,14 @@ namespace ShortWaveTrader
 
         IEnumerator FetchAndShow()
         {
-            ui.SetStatus("Fetching Bybit candles… ADAUSDT 1m latest");
+            ui.SetStatus("Fetching Bybit candles… ADAUSDT 3m last 3 days");
             ui.SetProgress(0f);
 
             var client = new BybitKlineClient();
             List<Candle> candles = null;
             string err = null;
 
-            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+            yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                 ok => candles = ok,
                 e => err = e
             ));
@@ -108,7 +108,7 @@ namespace ShortWaveTrader
             };
 
             yield return null; // allow UI to update before heavy loop
-            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 250);
+            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 500);
 
             if (bestP == null || bestR == null)
             {
@@ -138,7 +138,7 @@ namespace ShortWaveTrader
             ui.SetStatus("Fetching live candles for paper trading…");
             ui.SetProgress(0f);
 
-            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+            yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                 ok => liveCandles = ok,
                 e => err = e
             ));
@@ -164,6 +164,7 @@ namespace ShortWaveTrader
             pos ??= new PositionState();
             state ??= new BacktestState();
             state.Reset(p.StartingBalance);
+            var rng = new System.Random(p.RandomSeed);
 
             int warmup = Mathf.Max(Mathf.Max(p.SmaPeriod, p.StochPeriod), Mathf.Max(p.MacdSlow, p.MacdSignal)) + 2;
             int loggedTrades = 0;
@@ -174,7 +175,7 @@ namespace ShortWaveTrader
                 List<Candle> candles = null;
                 string err = null;
 
-                yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+                yield return StartCoroutine(client.FetchADAUSDT_3m_Last3Days(
                     ok => candles = ok,
                     e => err = e
                 ));
@@ -217,15 +218,19 @@ namespace ShortWaveTrader
                     {
                         if (i >= warmup && strat.ShouldEnterShort(candles, i, p, indicators))
                         {
+                            double entryPrice = TradeMath.SimulateFillPrice("short", price, p, rng);
                             double marginUsed = state.Balance * p.RiskFraction;
-                            double notional = p.MarginRate > 0 ? marginUsed / p.MarginRate : 0;
-                            double qty = price > 0 ? notional / price : 0;
+                            double leverage = TradeMath.ResolveLeverage(marginUsed, p);
+                            double notional = marginUsed * leverage;
+                            double qty = entryPrice > 0 ? notional / entryPrice : 0;
+                            double entryFee = TradeMath.BybitFee(notional, p);
+                            double liqPrice = TradeMath.CalcShortLiquidationPrice(entryPrice, leverage, p);
 
-                            if (marginUsed > 0 && qty > 0)
+                            if (marginUsed > 0 && qty > 0 && state.Balance >= marginUsed + entryFee)
                             {
-                                state.Balance -= marginUsed;
-                                double tpPrice = price * (1 - p.TakeProfitPct);
-                                pos.OpenShort(price, i, candles[i].Time, qty, marginUsed, tpPrice);
+                                state.Balance -= marginUsed + entryFee;
+                                double tpPrice = TradeMath.TakeProfitPrice(entryPrice);
+                                pos.OpenShort(entryPrice, i, candles[i].Time, qty, marginUsed, tpPrice, entryFee, notional, leverage, liqPrice);
                                 if (loggedTrades < 20)
                                 {
                                     ui.AddRow($"ENTER SHORT @{i} price={price:F4} tp={tpPrice:F4} qty={qty:F4}");
@@ -237,6 +242,40 @@ namespace ShortWaveTrader
                     else
                     {
                         pos.BarsHeld++;
+                        if (candles[i].High >= pos.LiqPrice && pos.LiqPrice > 0)
+                        {
+                            double exitPriceLiq = pos.LiqPrice;
+                            double exitFeeLiq = TradeMath.BybitFee(exitPriceLiq * pos.Qty, p);
+                            double pnlGrossLiq = (pos.EntryPrice - exitPriceLiq) * pos.Qty;
+                            double netPnlLiq = pnlGrossLiq - pos.EntryFee - exitFeeLiq;
+                            double afterLiq = state.Balance + pos.MarginUsed + pnlGrossLiq - exitFeeLiq;
+
+                            state.AddTrade(new TradeRecord
+                            {
+                                EntryBar = pos.EntryIndex,
+                                ExitBar = i,
+                                EntryTime = pos.EntryTime,
+                                ExitTime = candles[i].Time,
+                                Entry = pos.EntryPrice,
+                                Exit = exitPriceLiq,
+                                Pnl = netPnlLiq,
+                                EntryFee = pos.EntryFee,
+                                ExitFee = exitFeeLiq,
+                                BalanceAfter = afterLiq,
+                                Leverage = pos.Leverage,
+                                LiqPrice = pos.LiqPrice,
+                                Reason = "Liquidation"
+                            });
+
+                            if (loggedTrades < 20)
+                            {
+                                ui.AddRow($"LIQUIDATED @{i} mark={price:F4} liq={exitPriceLiq:F4} pnl={netPnlLiq:F2} bal={afterLiq:F2}");
+                                loggedTrades++;
+                            }
+
+                            pos.Reset();
+                            continue;
+                        }
                         bool exit = strat.ShouldExitShort(candles, i, pos, p, indicators, out var reason);
                         if (!exit && i == candles.Count - 1)
                         {
@@ -249,9 +288,12 @@ namespace ShortWaveTrader
                             double exitPrice = reason == "TP" && pos.TpPrice > 0
                                 ? Math.Min(pos.TpPrice, price)
                                 : price;
+                            exitPrice = TradeMath.SimulateFillPrice("long", exitPrice, p, rng);
+                            double exitFee = TradeMath.BybitFee(exitPrice * pos.Qty, p);
 
-                            double pnl = (pos.EntryPrice - exitPrice) * pos.Qty;
-                            double after = state.Balance + pos.MarginUsed + pnl;
+                            double pnlGross = (pos.EntryPrice - exitPrice) * pos.Qty;
+                            double netPnl = pnlGross - pos.EntryFee - exitFee;
+                            double after = state.Balance + pos.MarginUsed + pnlGross - exitFee;
 
                             state.AddTrade(new TradeRecord
                             {
@@ -261,20 +303,27 @@ namespace ShortWaveTrader
                                 ExitTime = candles[i].Time,
                                 Entry = pos.EntryPrice,
                                 Exit = exitPrice,
-                                Pnl = pnl,
+                                Pnl = netPnl,
+                                EntryFee = pos.EntryFee,
+                                ExitFee = exitFee,
                                 BalanceAfter = after,
+                                Leverage = pos.Leverage,
+                                LiqPrice = pos.LiqPrice,
                                 Reason = reason
                             });
 
                             if (loggedTrades < 20)
                             {
-                                ui.AddRow($"EXIT @{i} price={exitPrice:F4} pnl={pnl:F2} reason={reason} bal={after:F2}");
+                                ui.AddRow($"EXIT @{i} price={exitPrice:F4} pnl={netPnl:F2} reason={reason} bal={after:F2}");
                                 loggedTrades++;
                             }
 
                             pos.Reset();
                         }
                     }
+
+                    double openEquity = state.Balance + (pos.IsOpen ? pos.MarginUsed + pos.UnrealizedPnl(price) : 0);
+                    state.MarkEquity(openEquity);
                 }
 
                 lastProcessedMs = candles[^1].TimeMs;

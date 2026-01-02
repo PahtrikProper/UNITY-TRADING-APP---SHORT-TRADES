@@ -9,7 +9,7 @@ namespace ShortWaveTrader.Engines
         public event Action<int,int,StrategyParams,BacktestState> OnIteration;
         public event Action<StrategyParams,BacktestState> OnBestUpdated;
 
-        public (StrategyParams, BacktestState) OptimizeRandom(System.Collections.Generic.IReadOnlyList<Candle> candles, StrategyParams baseParams, IStrategy strat, int sampleCount = 250, int? seed = null)
+        public (StrategyParams, BacktestState) OptimizeRandom(System.Collections.Generic.IReadOnlyList<Candle> candles, StrategyParams baseParams, IStrategy strat, int sampleCount = 500, int? seed = null)
         {
             var rng = seed.HasValue ? new Random(seed.Value) : new Random();
             StrategyParams bestP = null;

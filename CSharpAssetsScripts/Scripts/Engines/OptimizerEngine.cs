@@ -15,22 +15,38 @@ namespace ShortWaveTrader.Engines
             BacktestState bestR = null;
             double bestBal = double.MinValue;
 
-            int total = baseParams.GridTrendSma.Length * baseParams.GridMaxBars.Length;
+            int total = baseParams.GridSmaPeriod.Length
+                      * baseParams.GridStochPeriod.Length
+                      * baseParams.GridUseMacd.Length
+                      * baseParams.GridUseSignal.Length
+                      * baseParams.GridUseMomentumExit.Length;
             int iter = 0;
 
-            foreach (var sma in baseParams.GridTrendSma)
-            foreach (var maxBars in baseParams.GridMaxBars)
+            foreach (var sma in baseParams.GridSmaPeriod)
+            foreach (var stoch in baseParams.GridStochPeriod)
+            foreach (var useMacd in baseParams.GridUseMacd)
+            foreach (var useSignal in baseParams.GridUseSignal)
+            foreach (var useMom in baseParams.GridUseMomentumExit)
             {
                 iter++;
 
                 var p = new StrategyParams
                 {
                     StartingBalance = baseParams.StartingBalance,
-                    Leverage = baseParams.Leverage,
-                    MaintenanceMarginPct = baseParams.MaintenanceMarginPct,
+                    RiskFraction = baseParams.RiskFraction,
+                    MarginRate = baseParams.MarginRate,
                     TakeProfitPct = baseParams.TakeProfitPct,
-                    TrendSmaPeriod = sma,
-                    MaxBarsInTrade = maxBars,
+                    StartMonth = baseParams.StartMonth,
+                    StartYear = baseParams.StartYear,
+                    SmoothK = baseParams.SmoothK,
+                    MacdFast = baseParams.MacdFast,
+                    MacdSlow = baseParams.MacdSlow,
+                    MacdSignal = baseParams.MacdSignal,
+                    SmaPeriod = sma,
+                    StochPeriod = stoch,
+                    UseMacd = useMacd,
+                    UseSignal = useSignal,
+                    UseMomentumExit = useMom
                 };
 
                 var res = new BacktestEngine().Run(candles, p, strat);

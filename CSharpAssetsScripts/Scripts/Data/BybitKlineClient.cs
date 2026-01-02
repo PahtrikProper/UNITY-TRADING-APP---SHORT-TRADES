@@ -107,10 +107,13 @@ namespace ShortWaveTrader.Data
                     double l = ParseDouble(row[3]);
                     double c = ParseDouble(row[4]);
                     double v = ParseDouble(row[5]);
+                    var time = DateTimeOffset.FromUnixTimeMilliseconds(tMs).UtcDateTime;
 
                     candles.Add(new Candle
                     {
+                        Index = candles.Count,
                         TimeMs = tMs,
+                        Time = time,
                         Open = o,
                         High = h,
                         Low = l,
@@ -123,6 +126,12 @@ namespace ShortWaveTrader.Data
 
                 // sanity: ensure increasing times
                 candles.Sort((a, b) => a.TimeMs.CompareTo(b.TimeMs));
+                for (int i = 0; i < candles.Count; i++)
+                {
+                    var c = candles[i];
+                    c.Index = i;
+                    candles[i] = c;
+                }
 
                 onOk?.Invoke(candles);
             }

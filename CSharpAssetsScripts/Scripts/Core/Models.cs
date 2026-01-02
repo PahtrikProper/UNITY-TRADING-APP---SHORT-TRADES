@@ -6,22 +6,39 @@ namespace ShortWaveTrader.Core
     public struct Candle
     {
         public int Index;
+        public long TimeMs;
         public DateTime Time;
-        public double Open, High, Low, Close, Volume;
+        public double Open;
+        public double High;
+        public double Low;
+        public double Close;
+        public double Volume;
     }
 
     public sealed class StrategyParams
     {
-        public double StartingBalance = 500.0;
-        public double Leverage = 10.0;
-        public double MaintenanceMarginPct = 0.5;
-        public double TakeProfitPct = 0.0038;
+        public double StartingBalance = 1000.0;
+        public double RiskFraction = 0.95;   // percent of equity to deploy per trade
+        public double MarginRate = 0.10;     // 10x notional when risking 100%
+        public double TakeProfitPct = 0.004; // 0.4% TP
+        public int StartYear = 2020;
+        public int StartMonth = 1;
 
-        public int TrendSmaPeriod = 50;
-        public int MaxBarsInTrade = 12;
+        public int SmaPeriod = 50;
+        public int StochPeriod = 14;
+        public int SmoothK = 2;
+        public int MacdFast = 12;
+        public int MacdSlow = 26;
+        public int MacdSignal = 9;
+        public bool UseMacd = true;
+        public bool UseSignal = true;
+        public bool UseMomentumExit = true;
 
-        public int[] GridTrendSma = new[] { 20, 30, 50, 80, 120 };
-        public int[] GridMaxBars  = new[] { 8, 12, 18, 24, 36 };
+        public int[] GridSmaPeriod = new[] { 30, 50, 80 };
+        public int[] GridStochPeriod = new[] { 10, 14, 20 };
+        public bool[] GridUseMacd = new[] { true, false };
+        public bool[] GridUseSignal = new[] { true, false };
+        public bool[] GridUseMomentumExit = new[] { true, false };
     }
 
     public sealed class PositionState
@@ -29,14 +46,22 @@ namespace ShortWaveTrader.Core
         public bool IsOpen;
         public double EntryPrice;
         public int EntryIndex;
+        public DateTime EntryTime;
         public int BarsHeld;
+        public double Qty;
+        public double MarginUsed;
+        public double TpPrice;
 
-        public void OpenShort(double price, int index)
+        public void OpenShort(double price, int index, DateTime time, double qty, double marginUsed, double tpPrice)
         {
             IsOpen = true;
             EntryPrice = price;
             EntryIndex = index;
             BarsHeld = 0;
+            EntryTime = time;
+            Qty = qty;
+            MarginUsed = marginUsed;
+            TpPrice = tpPrice;
         }
 
         public void Reset()
@@ -45,6 +70,10 @@ namespace ShortWaveTrader.Core
             EntryPrice = 0;
             EntryIndex = 0;
             BarsHeld = 0;
+            EntryTime = default;
+            Qty = 0;
+            MarginUsed = 0;
+            TpPrice = 0;
         }
     }
 
@@ -86,11 +115,12 @@ namespace ShortWaveTrader.Core
             EquityCurve.Add(Balance);
         }
 
-        public void MarkEquity()
+        public void MarkEquity(double? equityOverride = null)
         {
-            EquityCurve.Add(Balance);
-            if (Balance > Peak) Peak = Balance;
-            var dd = Peak - Balance;
+            double equity = equityOverride ?? Balance;
+            EquityCurve.Add(equity);
+            if (equity > Peak) Peak = equity;
+            var dd = Peak - equity;
             if (dd > MaxDrawdown) MaxDrawdown = dd;
         }
 
@@ -102,5 +132,13 @@ namespace ShortWaveTrader.Core
             TradesLog.Add(t);
             MarkEquity();
         }
+    }
+
+    public sealed class IndicatorCache
+    {
+        public List<double> Sma;
+        public List<double> StochK;
+        public List<double> Macd;
+        public List<double> Signal;
     }
 }

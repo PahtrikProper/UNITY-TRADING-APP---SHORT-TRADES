@@ -84,6 +84,17 @@ namespace ShortWaveTrader.UI
 
         public void SetSummary(string text) => summaryText.text = text;
         public string GetSummaryText() => summaryText != null ? summaryText.text : string.Empty;
+        public void ClearRows()
+        {
+            if (tableContent == null) return;
+            for (int i = tableContent.childCount - 1; i >= 0; i--)
+            {
+                var child = tableContent.GetChild(i);
+                GameObject.Destroy(child.gameObject);
+            }
+            Canvas.ForceUpdateCanvases();
+            if (scrollRect != null) scrollRect.verticalNormalizedPosition = 1f;
+        }
 
         // =========================
         // HELPERS

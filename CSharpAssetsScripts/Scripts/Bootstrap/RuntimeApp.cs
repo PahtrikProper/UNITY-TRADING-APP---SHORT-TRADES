@@ -108,7 +108,7 @@ namespace ShortWaveTrader
             };
 
             yield return null; // allow UI to update before heavy loop
-            (bestP, bestR) = optimizer.Optimize(candles, baseParams, strat);
+            (bestP, bestR) = optimizer.OptimizeRandom(candles, baseParams, strat, sampleCount: 250);
 
             if (bestP == null || bestR == null)
             {
@@ -125,12 +125,40 @@ namespace ShortWaveTrader
                 $"Backtest → Balance={bestR.Balance:F2} Trades={bestR.Trades} MaxDD={bestR.MaxDrawdown:F2}"
             );
 
-            yield return StartCoroutine(RunPaperTrader(candles, bestP, strat));
+            ui.ClearRows();
+            yield return StartCoroutine(RunLivePaperTrader(bestP, strat));
         }
 
-        private IEnumerator RunPaperTrader(IReadOnlyList<Candle> candles, StrategyParams p, IStrategy strat)
+        private IEnumerator RunLivePaperTrader(StrategyParams p, IStrategy strat)
         {
-            ui.AddRow("----- PAPER TRADING (LIVE REPLAY) -----");
+            var client = new BybitKlineClient();
+            List<Candle> liveCandles = null;
+            string err = null;
+
+            ui.SetStatus("Fetching live candles for paper trading…");
+            ui.SetProgress(0f);
+
+            yield return StartCoroutine(client.FetchADAUSDT_1m_Latest(
+                ok => liveCandles = ok,
+                e => err = e
+            ));
+
+            if (!string.IsNullOrEmpty(err) || liveCandles == null || liveCandles.Count == 0)
+            {
+                ui.AddRow("Unable to fetch live candles for paper trading.");
+                ui.SetStatus("Live fetch failed.");
+                if (!string.IsNullOrEmpty(err)) ui.AddRow(err);
+                yield break;
+            }
+
+            ui.SetStatus($"Paper trading on live candles ({liveCandles.Count}) with optimized params…");
+            ui.SetProgress(1f);
+            yield return StartCoroutine(RunPaperTrader(liveCandles, p, strat, "PAPER TRADING (LIVE DATA)"));
+        }
+
+        private IEnumerator RunPaperTrader(IReadOnlyList<Candle> candles, StrategyParams p, IStrategy strat, string header = "PAPER TRADING (LIVE REPLAY)")
+        {
+            ui.AddRow($"----- {header} -----");
             ui.SetStatus("Starting paper trading replay with best params…");
 
             var pos = new PositionState();

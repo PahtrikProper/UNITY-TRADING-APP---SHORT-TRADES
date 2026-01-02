@@ -213,6 +213,10 @@ namespace ShortWaveTrader
                 for (int i = startIdx; i < candles.Count; i++)
                 {
                     double price = candles[i].Close;
+                    double sma = indicators.Sma[i];
+                    double stoch = indicators.StochK[i];
+                    double macd = indicators.Macd[i];
+                    double signal = indicators.Signal[i];
 
                     if (!pos.IsOpen)
                     {
@@ -237,6 +241,11 @@ namespace ShortWaveTrader
                                     loggedTrades++;
                                 }
                             }
+                        }
+                        if (loggedTrades < 20)
+                        {
+                            ui.AddRow($"BAR @{i} t={candles[i].Time:HH:mm} price={price:F4} sma={sma:F4} stoch={stoch:F2} macd={macd:F4} sig={signal:F4} pos=FLAT");
+                            loggedTrades++;
                         }
                     }
                     else
@@ -319,6 +328,11 @@ namespace ShortWaveTrader
                             }
 
                             pos.Reset();
+                        }
+                        if (loggedTrades < 20)
+                        {
+                            ui.AddRow($"BAR @{i} t={candles[i].Time:HH:mm} price={price:F4} sma={sma:F4} stoch={stoch:F2} macd={macd:F4} sig={signal:F4} pos=SHORT qty={pos.Qty:F4} liq={pos.LiqPrice:F4} tp={pos.TpPrice:F4}");
+                            loggedTrades++;
                         }
                     }
 

@@ -28,31 +28,31 @@ namespace ShortWaveTrader.Data
     public sealed class BybitKlineClient
     {
         // Bybit v5 market kline
-        // https://api.bybit.com/v5/market/kline?category=linear&symbol=ADAUSDT&interval=3&start=...&end=...&limit=...
+        // https://api.bybit.com/v5/market/kline?category=linear&symbol=ADAUSDT&interval=1&start=...&end=...&limit=...
         private const string BaseUrl = "https://api.bybit.com/v5/market/kline";
         private const string DefaultSymbol = "ADAUSDT";   // USDT Perp
         private const string DefaultCategory = "linear";  // Bybit futures (Unified)
-        private const int DefaultIntervalMinutes = 3;
+        private const int DefaultIntervalMinutes = 1;
         private const int DefaultLimit = 1000;            // Bybit max per page
+        private const int DefaultLookbackHours = 24;
 
         /// <summary>
-        /// Fetch last 24 hours of 3m candles for ADAUSDT (USDT Perp) from Bybit v5, paging until no data.
+        /// Fetch last 24 hours of 1m candles for ADAUSDT (USDT Perp) from Bybit v5, paging until no data.
         /// Mirrors the Python data_client: retries retCode 10006 with backoff, returns oldest->newest.
         /// </summary>
-        public IEnumerator FetchADAUSDT_3m_Last24h(Action<List<Candle>> onOk, Action<string> onErr)
+        public IEnumerator FetchADAUSDT_1m_Last24h(Action<List<Candle>> onOk, Action<string> onErr)
         {
             var nowUtc = DateTime.UtcNow;
-            var startUtc = nowUtc.AddHours(-24);
+            var startUtc = nowUtc.AddHours(-DefaultLookbackHours);
 
-            long endSec = ToUnixSeconds(nowUtc);
-            long startSec = ToUnixSeconds(startUtc);
+            long endMs = ToUnixMs(nowUtc);
+            long startMs = ToUnixMs(startUtc);
             var all = new List<Candle>();
 
-            while (startSec < endSec)
+            while (startMs < endMs)
             {
-                long startMs = startSec * 1000;
                 string url =
-                    $"{BaseUrl}?category={DefaultCategory}&symbol={DefaultSymbol}&interval={DefaultIntervalMinutes}&start={startMs}&limit={DefaultLimit}";
+                    $"{BaseUrl}?category={DefaultCategory}&symbol={DefaultSymbol}&interval={DefaultIntervalMinutes}&start={startMs}&end={endMs}&limit={DefaultLimit}";
 
                 int attempt = 0;
                 BybitKlineResponse resp = null;
@@ -141,8 +141,8 @@ namespace ShortWaveTrader.Data
                 all.AddRange(page);
 
                 // advance start to next bar to avoid duplicates
-                long lastMs = page.Count > 0 ? page[^1].TimeMs : startSec * 1000;
-                startSec = (lastMs / 1000) + (DefaultIntervalMinutes * 60);
+                long lastMs = page.Count > 0 ? page[^1].TimeMs : startMs;
+                startMs = lastMs + (DefaultIntervalMinutes * 60 * 1000);
 
                 // small pause to avoid hammering
                 yield return new WaitForSeconds(0.2f);
@@ -150,7 +150,7 @@ namespace ShortWaveTrader.Data
 
             if (all.Count == 0)
             {
-                onErr?.Invoke("Bybit returned no candles for ADAUSDT 3m futures.");
+                onErr?.Invoke("Bybit returned no candles for ADAUSDT 1m futures.");
                 yield break;
             }
 
@@ -169,12 +169,6 @@ namespace ShortWaveTrader.Data
         {
             var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             return (long)(utc - epoch).TotalMilliseconds;
-        }
-
-        private static long ToUnixSeconds(DateTime utc)
-        {
-            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            return (long)(utc - epoch).TotalSeconds;
         }
 
         private static double ParseDouble(string s)

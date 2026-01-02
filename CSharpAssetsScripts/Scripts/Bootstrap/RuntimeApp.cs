@@ -20,14 +20,14 @@ namespace ShortWaveTrader
 
         IEnumerator FetchAndShow()
         {
-            ui.SetStatus("Fetching Bybit candles… ADAUSDT 3m last 24h");
+            ui.SetStatus("Fetching Bybit candles… ADAUSDT 1m last 24h");
             ui.SetProgress(0f);
 
             var client = new BybitKlineClient();
             List<Candle> candles = null;
             string err = null;
 
-            yield return StartCoroutine(client.FetchADAUSDT_3m_Last24h(
+            yield return StartCoroutine(client.FetchADAUSDT_1m_Last24h(
                 ok => candles = ok,
                 e => err = e
             ));

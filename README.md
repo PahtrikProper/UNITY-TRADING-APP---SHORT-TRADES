@@ -1,4 +1,5 @@
 # UNITY-TRADING-APP — Short Trades (Bybit-isolated model)
+<img width="858" height="482" alt="Screenshot 2026-01-02 at 9 46 49 PM" src="https://github.com/user-attachments/assets/b256fe24-966f-471b-a998-ab805bb93d1f" />
 
 This repository contains a Unity-based short-only trading demonstrator that mirrors Bybit isolated-margin behavior. The Unity side drives backtests, parameter sweeps, and live paper trading while modeling Bybit taker fees, spread/slippage, and liquidation for ADAUSDT linear perpetuals.
 

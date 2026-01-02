@@ -33,12 +33,11 @@ namespace ShortWaveTrader.Data
         private const string DefaultSymbol = "ADAUSDT";   // USDT Perp
         private const string DefaultCategory = "linear";  // Bybit futures (Unified)
         private const int DefaultIntervalMinutes = 1;
-        private const int DefaultLimit = 1000;            // Bybit max per page
-        private const int DefaultLookbackHours = 24;
+        private const int DefaultLimit = 200;             // Canonical limit per instructions
 
         /// <summary>
         /// Fetch latest 1m candles for ADAUSDT (USDT Perp) from Bybit v5 (newest first -> reversed to oldest first).
-        /// Mirrors the provided reference approach: single call, retry code 10006 with backoff, reverse list.
+        /// Mirrors the provided reference approach: single call without start/end, retry code 10006 with backoff, reverse list.
         /// </summary>
         public IEnumerator FetchADAUSDT_1m_Latest(Action<List<Candle>> onOk, Action<string> onErr)
         {
@@ -96,9 +95,22 @@ namespace ShortWaveTrader.Data
                 }
             }
 
-            if (resp.result == null || resp.result.list == null || resp.result.list.Count == 0)
+            // Validate required invariants per instructions
+            if (resp.result == null)
             {
-                onErr?.Invoke("Bybit returned no candles for ADAUSDT 1m futures.");
+                onErr?.Invoke($"Bybit returned no result object (url={url})");
+                yield break;
+            }
+
+            if (!string.Equals(resp.result.category, DefaultCategory, StringComparison.OrdinalIgnoreCase))
+            {
+                onErr?.Invoke($"Unexpected category '{resp.result.category}' (url={url})");
+                yield break;
+            }
+
+            if (resp.result.list == null || resp.result.list.Count == 0)
+            {
+                onErr?.Invoke($"Bybit returned empty candles list (url={url})");
                 yield break;
             }
 

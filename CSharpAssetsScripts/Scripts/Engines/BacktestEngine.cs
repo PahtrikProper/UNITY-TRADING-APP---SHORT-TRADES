@@ -36,7 +36,7 @@ namespace ShortWaveTrader.Engines
                     {
                         double entryPrice = TradeMath.SimulateFillPrice("short", price, p, rng);
                         double marginUsed = st.Balance * p.RiskFraction;
-                        double leverage = TradeMath.ResolveLeverage(p);
+                        double leverage = TradeMath.ResolveLeverage(marginUsed, p);
                         double notional = marginUsed * leverage;
                         double qty = entryPrice > 0 ? notional / entryPrice : 0;
                         double entryFee = TradeMath.BybitFee(notional, p);

@@ -19,8 +19,10 @@ namespace ShortWaveTrader.Core
             return Math.Max(entryPrice * (1 + (1 / lev) - mmRate + takerFee), 0);
         }
 
-        public static double ResolveLeverage(StrategyParams p)
+        public static double ResolveLeverage(double marginUsed, StrategyParams p)
         {
+            if (marginUsed <= 0) return 1.0;
+
             double desired = p.DesiredLeverage > 0
                 ? p.DesiredLeverage
                 : (p.MarginRate > 0 ? 1.0 / p.MarginRate : 1.0);
